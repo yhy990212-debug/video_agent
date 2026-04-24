@@ -1,0 +1,17 @@
+{
+  "writing_preferences": {
+    "tone": [],
+    "avoid": [],
+    "frameworks": [],
+    "word_count_range": [
+      800,
+      1500
+    ]
+  },
+  "content_domain": "",
+  "platform": "",
+  "persona": "",
+  "custom_instructions": [],
+  "session_history": [],
+  "skill_notes": []
+}

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "video-agent"
+version = "1.0.0"
+description = "视频文案爆款复刻 Agent"
+requires-python = ">=3.9"
+dependencies = [
+    "rich>=13.0.0",
+    "click>=8.1.0",
+    "openai>=1.0.0",
+    "python-docx>=1.1.0",
+    "requests>=2.31.0",
+    "questionary>=2.0.0",
+    "cryptography>=41.0.0",
+]
+
+[project.scripts]
+video-agent = "main:cli"
+
+[tool.setuptools]
+py-modules = ["main", "config"]
+
+[tool.setuptools.packages.find]
+include = ["models*", "workflow*", "knowledge_base*", "skills*"]

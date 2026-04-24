@@ -1,0 +1,1011 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>爆款复刻 Agent</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #0a0a14; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #3a3a5c; border-radius: 4px; }
+    .prose-content { white-space: pre-wrap; line-height: 1.85; }
+    .typing-cursor::after { content: '▋'; animation: blink 0.9s step-end infinite; color: #a78bfa; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+    .glass { background: rgba(255,255,255,0.04); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.08); }
+    .gradient-text { background: linear-gradient(135deg,#a78bfa,#60a5fa); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+    .step-line { height: 2px; flex: 1; }
+    textarea, input, select { color-scheme: dark; }
+    .hover-scale { transition: transform 0.15s; }
+    .hover-scale:hover { transform: scale(1.02); }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ─── Storage ───────────────────────────────────────────────
+const SK = {
+  API_KEYS: 'vca_api_keys',
+  MODEL: 'vca_selected_model',
+  KB: 'vca_knowledge_base',
+  SKILLS: 'vca_skills',
+};
+const load = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
+const save = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+
+// ─── Providers ─────────────────────────────────────────────
+const PROVIDERS = {
+  moonshot: {
+    name: 'Kimi (月之暗面)', icon: '🌙', color: '#00d4aa',
+    endpoint: 'https://api.moonshot.cn/v1/chat/completions',
+    models: [
+      { id: 'moonshot-v1-8k',   label: 'Moonshot V1 8K' },
+      { id: 'moonshot-v1-32k',  label: 'Moonshot V1 32K' },
+      { id: 'moonshot-v1-128k', label: 'Moonshot V1 128K' },
+    ],
+  },
+  deepseek: {
+    name: 'DeepSeek', icon: '🔵', color: '#4f96ff',
+    endpoint: 'https://api.deepseek.com/v1/chat/completions',
+    models: [
+      { id: 'deepseek-chat',     label: 'DeepSeek Chat (V3)' },
+      { id: 'deepseek-reasoner', label: 'DeepSeek Reasoner (R1)' },
+    ],
+  },
+  doubao: {
+    name: '豆包 (ByteDance)', icon: '🫘', color: '#ff6b6b',
+    endpoint: 'https://ark.volces.com/api/v3/chat/completions',
+    models: [{ id: '__custom__', label: '自定义 Endpoint ID' }],
+    customModel: true,
+  },
+  qwen: {
+    name: '通义千问 (Qwen)', icon: '🌐', color: '#ff8c00',
+    endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+    models: [
+      { id: 'qwen-max',   label: 'Qwen Max' },
+      { id: 'qwen-plus',  label: 'Qwen Plus' },
+      { id: 'qwen-turbo', label: 'Qwen Turbo' },
+      { id: 'qwen-long',  label: 'Qwen Long' },
+    ],
+  },
+  zhipu: {
+    name: '智谱 (GLM)', icon: '🧠', color: '#9b59b6',
+    endpoint: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
+    models: [
+      { id: 'glm-4-flash', label: 'GLM-4 Flash (免费)' },
+      { id: 'glm-4-plus',  label: 'GLM-4 Plus' },
+      { id: 'glm-4',       label: 'GLM-4' },
+    ],
+  },
+};
+
+// ─── Default Skills ────────────────────────────────────────
+const DEFAULT_SKILLS = [
+  { id: 'style',     name: '写作风格偏好',   desc: '记录你喜欢的语言风格和表达习惯', content: '', usage: 0, updated: new Date().toISOString() },
+  { id: 'framework', name: '内容框架偏好',   desc: '记录你倾向使用的内容结构和循环框架', content: '', usage: 0, updated: new Date().toISOString() },
+  { id: 'topic',     name: '选题偏好',       desc: '记录你常用的选题方向和类型', content: '', usage: 0, updated: new Date().toISOString() },
+  { id: 'audience',  name: '目标受众画像',   desc: '记录你的核心受众特征', content: '', usage: 0, updated: new Date().toISOString() },
+  { id: 'cta',       name: '转化与CTA偏好', desc: '记录你偏好的转化方式和行动召唤语', content: '', usage: 0, updated: new Date().toISOString() },
+];
+
+// ─── System Prompt ─────────────────────────────────────────
+const SYS = `你是一名专业的自媒体内容策略师和爆款文案创作者，深度理解短视频和中长视频的创作逻辑。
+
+## 核心创作框架
+
+### 价值公式
+产品/内容为用户提供价值 = （新效用 - 旧效用）- （直接成本 + 交易成本 + 间接成本）
+
+### 创作理念
+解决特定人群，在特定时间节点下的，特定需求
+思考模型：我是谁 → 凭什么 → 帮什么人 → 用什么方式 → 怎么解决 → 什么问题 → 达到什么效果
+
+### 开头职能（让用户完成第一次时间付费）
+需要解决四个顾虑：
+- "这关我什么事？" ——与我无关的顾虑（精准人群锁定）
+- "这有用吗？" ——价值不明的顾虑（价值承诺）
+- "你谁啊？我凭什么信你？" ——信任缺失的顾虑（权威/共情）
+- "会不会很复杂/耗时？" ——成本过高的顾虑（低门槛暗示）
+
+### 表达循环框架（CREM）
+观点(C) → 原理(R) → 案例(E) → 方法(M) → 下一个观点...
+长视频是由无数个表达循环嵌套组成的，每15秒给用户一个"续费的理由"。
+
+### 金句进化公式
+找矛盾 → 套模型 → 磨节奏
+- 【对比模型】：A vs B，两种人生/两种结果
+- 【重复模型】：越X，就越Y（强化因果）
+- 【比喻模型】：把抽象概念类比成具体事物
+- 【极端模型】：最危险的时刻是...
+- 【定义模型】：所谓X，不过是Y
+磨节奏标准：听感 + 简洁 + 押韵
+
+### 写作质量原则
+- 动词 > 名词 > 形容词
+- 数据比总结更有力（用具体数字替代"很多"）
+- 真实发生过的情感是最佳素材
+- 白描永远是最疼的刀
+- 养成2句话、2句话写文案的习惯
+
+### 转化逻辑（不要卖产品，卖解决方案）
+客观困难（内因外因）→ 传统方案局限性 → 我的解决方案如何生效 → 当前有活动/机会
+
+### 马斯洛需求 × 七宗罪（情绪钩子设计）
+- 安全需求 × 恐惧：量化"不改变"的代价，制造紧迫感
+- 尊重需求 × 傲慢：提供"碾压"的优越感和成就感
+- 归属需求 × 嫉妒：制造对比，你的同学正在偷偷进步
+- 自我实现 × 懒惰：主打捷径、模板、秒杀，最小努力最大效果
+
+### 营销转化自查清单
+□ 是否把"难受"翻译成了可感知的"成本"（时间/情感/健康）？
+□ 是否点明了痛苦的本质（过来人的金句/观点）？
+□ 是否用具体例子解释了方法如何起效？
+□ 是否有效率提升的量化对比（如1小时抵3小时）？
+□ 行动指令是否足够具体、清晰、有力？
+□ 结尾是否给了用户一个积极的心理暗示？`;
+
+// ─── LLM Call ──────────────────────────────────────────────
+async function callLLM({ endpoint, apiKey, modelId, messages, onChunk, onDone, onError }) {
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({ model: modelId, messages, stream: true, temperature: 0.72, max_tokens: 6000 }),
+    });
+    if (!res.ok) { const t = await res.text(); throw new Error(`API ${res.status}: ${t.slice(0,200)}`); }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let full = '', buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n'); buf = lines.pop() || '';
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t || t === 'data: [DONE]' || !t.startsWith('data: ')) continue;
+        try {
+          const j = JSON.parse(t.slice(6));
+          const d = j.choices?.[0]?.delta?.content || j.choices?.[0]?.delta?.reasoning_content || '';
+          if (d) { full += d; onChunk?.(d, full); }
+        } catch {}
+      }
+    }
+    onDone?.(full);
+    return full;
+  } catch (e) { onError?.(e.message); throw e; }
+}
+
+// ─── Word Export ───────────────────────────────────────────
+function exportWord(content, title) {
+  const body = content.split('\n').map(line => {
+    if (line.startsWith('# '))   return `<h1 style="font-size:18pt;font-weight:bold;margin:12pt 0">${line.slice(2)}</h1>`;
+    if (line.startsWith('## '))  return `<h2 style="font-size:15pt;font-weight:bold;margin:10pt 0">${line.slice(3)}</h2>`;
+    if (line.startsWith('### ')) return `<h3 style="font-size:13pt;font-weight:bold;margin:8pt 0">${line.slice(4)}</h3>`;
+    if (!line.trim()) return '<p style="margin:4pt 0">&nbsp;</p>';
+    return `<p style="margin:6pt 0;text-indent:2em">${line}</p>`;
+  }).join('');
+  const html = `<!DOCTYPE html><html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><title>${title}</title><style>body{font-family:"Microsoft YaHei",Arial,sans-serif;font-size:12pt;line-height:1.9;margin:2.5cm}</style></head><body>${body}</body></html>`;
+  const blob = new Blob(['\ufeff', html], { type: 'application/msword;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${title.slice(0,30)}_${new Date().toLocaleDateString('zh-CN').replace(/\//g,'-')}.doc`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+// ─── Shared UI ─────────────────────────────────────────────
+function Btn({ children, onClick, variant = 'primary', disabled, className = '', ...rest }) {
+  const base = 'px-4 py-2 rounded-xl text-sm font-medium transition-all focus:outline-none flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed';
+  const v = {
+    primary:  'bg-purple-600 hover:bg-purple-500 text-white',
+    success:  'bg-green-600 hover:bg-green-500 text-white',
+    ghost:    'border border-gray-700 hover:border-gray-500 text-gray-400 hover:text-gray-200',
+    danger:   'bg-red-900/40 hover:bg-red-800/50 text-red-400',
+    blue:     'bg-blue-600 hover:bg-blue-500 text-white',
+  };
+  return <button onClick={onClick} disabled={disabled} className={`${base} ${v[variant] || v.primary} ${className}`} {...rest}>{children}</button>;
+}
+
+function Card({ children, className = '' }) {
+  return <div className={`glass rounded-2xl p-5 ${className}`}>{children}</div>;
+}
+
+function Input({ label, ...props }) {
+  return (
+    <div>
+      {label && <label className="text-xs text-gray-400 mb-1.5 block">{label}</label>}
+      <input {...props} className="w-full bg-gray-800/80 border border-gray-700 rounded-xl px-3.5 py-2.5 text-sm text-gray-200 focus:outline-none focus:border-purple-500 transition-colors placeholder:text-gray-600" />
+    </div>
+  );
+}
+
+function Textarea({ label, ...props }) {
+  return (
+    <div>
+      {label && <label className="text-xs text-gray-400 mb-1.5 block">{label}</label>}
+      <textarea {...props} className="w-full bg-gray-800/80 border border-gray-700 rounded-xl px-3.5 py-2.5 text-sm text-gray-300 focus:outline-none focus:border-purple-500 transition-colors resize-none placeholder:text-gray-600 font-mono" />
+    </div>
+  );
+}
+
+// ─── Sidebar ───────────────────────────────────────────────
+function Sidebar({ page, setPage, hasModel }) {
+  const items = [
+    { id: 'workflow',  icon: '🎯', label: '创作工作流' },
+    { id: 'knowledge', icon: '📚', label: '知识库' },
+    { id: 'skills',    icon: '🧩', label: 'Skills 记忆' },
+    { id: 'settings',  icon: '⚙️', label: '模型设置' },
+  ];
+  return (
+    <div className="w-52 min-h-screen bg-gray-900/80 border-r border-gray-800 flex flex-col flex-shrink-0">
+      <div className="px-5 py-5 border-b border-gray-800">
+        <div className="text-base font-bold gradient-text leading-tight">爆款复刻 Agent</div>
+        <div className="text-xs text-gray-600 mt-1">智能视频文案助手</div>
+      </div>
+      <nav className="flex-1 p-3 space-y-0.5">
+        {items.map(it => (
+          <button key={it.id} onClick={() => setPage(it.id)}
+            className={`w-full text-left px-3 py-2.5 rounded-xl text-sm flex items-center gap-3 transition-all ${
+              page === it.id ? 'bg-purple-600/90 text-white font-medium' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+            }`}>
+            <span className="text-base">{it.icon}</span>
+            <span>{it.label}</span>
+            {it.id === 'settings' && !hasModel && <span className="ml-auto w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />}
+          </button>
+        ))}
+      </nav>
+      <div className="px-4 pb-4 text-xs text-gray-700 text-center">v1.0 · 基于 skill-creator</div>
+    </div>
+  );
+}
+
+// ─── Settings Page ─────────────────────────────────────────
+function SettingsPage({ apiKeys, setApiKeys, model, setModel }) {
+  const [draft, setDraft] = useState({});
+  const [show, setShow] = useState({});
+  const [customId, setCustomId] = useState('');
+
+  const saveKey = (pid) => {
+    const val = draft[pid] !== undefined ? draft[pid] : apiKeys[pid] || '';
+    const nk = { ...apiKeys, [pid]: val };
+    setApiKeys(nk); save(SK.API_KEYS, nk);
+  };
+
+  const selectModel = (pid, mid) => {
+    let resolvedId = mid;
+    if (mid === '__custom__') {
+      const id = prompt('请输入豆包 Endpoint ID（如: ep-20240130xxxxxx）:');
+      if (!id) return;
+      resolvedId = id;
+    }
+    const m = { provider: pid, modelId: resolvedId, endpoint: PROVIDERS[pid].endpoint };
+    setModel(m); save(SK.MODEL, m);
+  };
+
+  return (
+    <div className="p-6 max-w-2xl">
+      <div className="mb-6">
+        <div className="text-xl font-bold text-white mb-1">模型设置</div>
+        <div className="text-gray-400 text-sm">配置各平台 API Key，选择当前使用的模型</div>
+      </div>
+
+      {model && (
+        <Card className="mb-5 border-purple-500/30 bg-purple-500/5">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">{PROVIDERS[model.provider]?.icon}</span>
+            <div>
+              <div className="text-xs text-gray-500 mb-0.5">当前模型</div>
+              <div className="font-semibold text-white">{PROVIDERS[model.provider]?.name} · {model.modelId}</div>
+            </div>
+            <span className="ml-auto px-2.5 py-1 bg-green-500/20 text-green-400 rounded-full text-xs font-medium">✓ 已选择</span>
+          </div>
+        </Card>
+      )}
+
+      <div className="space-y-4">
+        {Object.entries(PROVIDERS).map(([pid, prov]) => (
+          <Card key={pid}>
+            <div className="flex items-center gap-2.5 mb-4">
+              <span className="text-xl">{prov.icon}</span>
+              <span className="font-semibold text-white">{prov.name}</span>
+              {apiKeys[pid] && <span className="ml-auto text-xs text-green-400 bg-green-400/10 px-2 py-0.5 rounded-full">Key 已配置</span>}
+            </div>
+            <div className="mb-4">
+              <label className="text-xs text-gray-500 mb-1.5 block">API Key</label>
+              <div className="flex gap-2">
+                <input
+                  type={show[pid] ? 'text' : 'password'}
+                  placeholder={`输入 ${prov.name} API Key…`}
+                  defaultValue={apiKeys[pid] || ''}
+                  onChange={e => setDraft({ ...draft, [pid]: e.target.value })}
+                  className="flex-1 bg-gray-800/80 border border-gray-700 rounded-xl px-3.5 py-2 text-sm text-gray-200 focus:outline-none focus:border-purple-500"
+                />
+                <button onClick={() => setShow({ ...show, [pid]: !show[pid] })}
+                  className="px-3 bg-gray-800 border border-gray-700 rounded-xl text-gray-400 hover:text-gray-200 text-sm">
+                  {show[pid] ? '🙈' : '👁'}
+                </button>
+                <Btn onClick={() => saveKey(pid)}>保存</Btn>
+              </div>
+            </div>
+            {apiKeys[pid] && (
+              <div>
+                <label className="text-xs text-gray-500 mb-2 block">选择模型（点击选中）</label>
+                <div className="flex flex-wrap gap-2">
+                  {prov.models.map(m => (
+                    <button key={m.id} onClick={() => selectModel(pid, m.id)}
+                      className={`px-3 py-1.5 rounded-lg text-xs border transition-all ${
+                        model?.provider === pid && model?.modelId === m.id
+                          ? 'border-purple-500 bg-purple-500/20 text-purple-300 font-medium'
+                          : 'border-gray-700 bg-gray-800 text-gray-400 hover:border-gray-600 hover:text-gray-300'
+                      }`}>
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Knowledge Page ────────────────────────────────────────
+function KnowledgePage({ kb, setKb }) {
+  const [addOpen, setAddOpen] = useState(false);
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+  const [viewing, setViewing] = useState(null);
+
+  const add = () => {
+    if (!title.trim() || !content.trim()) return;
+    const item = { id: Date.now()+'', title: title.trim(), content: content.trim(), chars: content.trim().length, date: new Date().toISOString() };
+    const nkb = [item, ...kb]; setKb(nkb); save(SK.KB, nkb);
+    setTitle(''); setContent(''); setAddOpen(false);
+  };
+  const del = (id) => { if (!confirm('确认删除？')) return; const n = kb.filter(x => x.id !== id); setKb(n); save(SK.KB, n); if (viewing?.id === id) setViewing(null); };
+
+  return (
+    <div className="p-6">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <div className="text-xl font-bold text-white mb-1">知识库</div>
+          <div className="text-gray-400 text-sm">存放你认为优质的爆款文案，系统学习你的风格偏好</div>
+        </div>
+        <Btn onClick={() => setAddOpen(!addOpen)}>+ 添加文章</Btn>
+      </div>
+
+      {addOpen && (
+        <Card className="mb-5">
+          <div className="text-sm font-semibold text-white mb-4">📄 添加新文章</div>
+          <div className="space-y-3">
+            <Input label="文章标题" placeholder="如：高中数学逆袭爆款文案-函数专题" value={title} onChange={e => setTitle(e.target.value)} />
+            <Textarea label="文案内容（粘贴原文）" placeholder="粘贴爆款文案全文…" rows={8} value={content} onChange={e => setContent(e.target.value)} />
+          </div>
+          <div className="flex gap-2 mt-4">
+            <Btn onClick={add} variant="success">✓ 保存到知识库</Btn>
+            <Btn onClick={() => setAddOpen(false)} variant="ghost">取消</Btn>
+          </div>
+        </Card>
+      )}
+
+      {viewing && (
+        <Card className="mb-5 border-blue-500/30">
+          <div className="flex items-start justify-between mb-3">
+            <span className="font-semibold text-white">{viewing.title}</span>
+            <button onClick={() => setViewing(null)} className="text-gray-500 hover:text-gray-300 text-xl ml-4">×</button>
+          </div>
+          <div className="bg-gray-800/60 rounded-xl p-4 max-h-72 overflow-y-auto text-sm text-gray-300 prose-content">{viewing.content}</div>
+        </Card>
+      )}
+
+      {kb.length === 0 ? (
+        <div className="text-center py-20 text-gray-600">
+          <div className="text-5xl mb-4">📚</div>
+          <div className="text-base">知识库还是空的</div>
+          <div className="text-sm mt-2">添加优质爆款文案，帮助 Agent 学习你的内容风格</div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {kb.map(item => (
+            <Card key={item.id} className="flex items-center gap-4">
+              <div className="text-3xl flex-shrink-0">📝</div>
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-white truncate">{item.title}</div>
+                <div className="text-xs text-gray-500 mt-0.5">{item.chars} 字 · {new Date(item.date).toLocaleDateString('zh-CN')}</div>
+                <div className="text-xs text-gray-500 mt-1 truncate">{item.content.slice(0, 90)}…</div>
+              </div>
+              <div className="flex gap-2 flex-shrink-0">
+                <Btn onClick={() => setViewing(viewing?.id === item.id ? null : item)} variant="ghost" className="text-xs px-3 py-1.5">查看</Btn>
+                <Btn onClick={() => del(item.id)} variant="danger" className="text-xs px-3 py-1.5">删除</Btn>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Skills Page ───────────────────────────────────────────
+function SkillsPage({ skills, setSkills }) {
+  const [editing, setEditing] = useState(null);
+  const [editVal, setEditVal] = useState('');
+  const [addOpen, setAddOpen] = useState(false);
+  const [ns, setNs] = useState({ name: '', desc: '', content: '' });
+
+  const startEdit = (s) => { setEditing(s.id); setEditVal(s.content); };
+  const saveEdit = (id) => {
+    const u = skills.map(s => s.id === id ? { ...s, content: editVal, updated: new Date().toISOString() } : s);
+    setSkills(u); save(SK.SKILLS, u); setEditing(null);
+  };
+  const del = (id) => { if (!confirm('确认删除此 Skill？')) return; const u = skills.filter(s => s.id !== id); setSkills(u); save(SK.SKILLS, u); };
+  const addSkill = () => {
+    if (!ns.name.trim()) return;
+    const sk = { id: Date.now()+'', name: ns.name, desc: ns.desc, content: ns.content, usage: 0, updated: new Date().toISOString() };
+    const u = [...skills, sk]; setSkills(u); save(SK.SKILLS, u); setNs({ name: '', desc: '', content: '' }); setAddOpen(false);
+  };
+
+  return (
+    <div className="p-6">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <div className="text-xl font-bold text-white mb-1">Skills 记忆系统</div>
+          <div className="text-gray-400 text-sm">Agent 的长期记忆，越用越懂你的创作风格</div>
+        </div>
+        <Btn onClick={() => setAddOpen(!addOpen)}>+ 新建 Skill</Btn>
+      </div>
+
+      <Card className="mb-5 border-l-4 border-purple-500 rounded-l-none">
+        <div className="text-sm text-gray-300 leading-relaxed">
+          🧩 <strong className="text-purple-300">什么是 Skills？</strong> Skills 是 Agent 的结构化记忆单元，记录你的创作偏好、风格要求、常用框架。
+          每次创作时，系统会自动将相关 Skills 注入提示词，让生成结果越来越符合你的风格。
+          <span className="text-purple-400"> 你可以在第4步完成创作后，填写反馈来更新 Skills 内容。</span>
+        </div>
+      </Card>
+
+      {addOpen && (
+        <Card className="mb-5">
+          <div className="text-sm font-semibold text-white mb-4">新建 Skill</div>
+          <div className="space-y-3">
+            <Input label="Skill 名称" placeholder="如：我的金句偏好" value={ns.name} onChange={e => setNs({...ns, name: e.target.value})} />
+            <Input label="Skill 描述（一句话）" placeholder="如：记录我偏好的金句风格和模型" value={ns.desc} onChange={e => setNs({...ns, desc: e.target.value})} />
+            <Textarea label="Skill 内容（具体描述你的偏好）" placeholder="描述你的具体偏好，如：我喜欢用对比模型金句，句子要短，15字以内，有节奏感…" rows={4} value={ns.content} onChange={e => setNs({...ns, content: e.target.value})} />
+          </div>
+          <div className="flex gap-2 mt-4">
+            <Btn onClick={addSkill} variant="success">✓ 创建</Btn>
+            <Btn onClick={() => setAddOpen(false)} variant="ghost">取消</Btn>
+          </div>
+        </Card>
+      )}
+
+      <div className="space-y-4">
+        {skills.map(sk => (
+          <Card key={sk.id}>
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <div className="font-semibold text-white">{sk.name}</div>
+                <div className="text-xs text-gray-500 mt-0.5">{sk.desc}</div>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0 ml-4">
+                <span className="text-xs text-gray-600">使用 {sk.usage} 次</span>
+                <Btn onClick={() => startEdit(sk)} variant="ghost" className="text-xs px-2.5 py-1">编辑</Btn>
+                <Btn onClick={() => del(sk.id)} variant="danger" className="text-xs px-2.5 py-1">删除</Btn>
+              </div>
+            </div>
+            {editing === sk.id ? (
+              <div>
+                <Textarea rows={5} value={editVal} onChange={e => setEditVal(e.target.value)} />
+                <div className="flex gap-2 mt-3">
+                  <Btn onClick={() => saveEdit(sk.id)}>保存</Btn>
+                  <Btn onClick={() => setEditing(null)} variant="ghost">取消</Btn>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-gray-800/50 rounded-xl px-4 py-3 text-sm text-gray-300 min-h-[40px]">
+                {sk.content ? <span className="prose-content">{sk.content}</span> : <span className="text-gray-600 italic">暂无内容 — 点击"编辑"添加你的偏好描述</span>}
+              </div>
+            )}
+            <div className="text-xs text-gray-700 mt-2">最后更新：{new Date(sk.updated).toLocaleDateString('zh-CN')}</div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 1 ────────────────────────────────────────────────
+function Step1({ onNext, model, apiKeys, skills, kb }) {
+  const [inputs, setInputs] = useState(['']);
+  const [busy, setBusy] = useState(false);
+  const [stream, setStream] = useState('');
+  const [result, setResult] = useState('');
+
+  const setInput = (i, v) => { const a = [...inputs]; a[i] = v; setInputs(a); };
+
+  const analyze = async () => {
+    const valid = inputs.filter(t => t.trim());
+    if (!valid.length) return alert('请至少输入一篇爆款文案');
+    if (!model) return alert('请先在【模型设置】中配置模型');
+    const key = apiKeys[model.provider];
+    if (!key) return alert('请先在【模型设置】中配置 API Key');
+
+    setBusy(true); setStream(''); setResult('');
+
+    const skillCtx = skills.filter(s => s.content.trim()).map(s => `### ${s.name}\n${s.content}`).join('\n\n');
+    const kbCtx = kb.slice(0,2).map(k => `《${k.title}》节选：\n${k.content.slice(0,400)}…`).join('\n---\n');
+    const sys = SYS + (skillCtx ? `\n\n## 用户偏好（Skills）\n${skillCtx}` : '') + (kbCtx ? `\n\n## 用户知识库风格参考\n${kbCtx}` : '');
+    const content = valid.map((t,i) => `【文案${i+1}】\n${t}`).join('\n\n---\n\n');
+
+    const prompt = `请对以下${valid.length > 1 ? valid.length+'篇' : ''}爆款文案进行专业深度分析。
+
+${content}
+
+---
+
+## 分析维度（请逐一展开）
+
+### 一、整体结构与叙事框架
+- 宏观结构（开头职能/主体循环/收尾设计）
+- 使用的表达循环（CREM：观点-原理-案例-方法），列出每个循环
+- 各段落的递进关系
+
+### 二、人群锁定与痛点挖掘
+- 目标受众精准画像（年龄/场景/痛点/所处阶段）
+- 用了哪些人群锁定技巧
+- 触发的情绪钩子（马斯洛 × 七宗罪分析）
+
+### 三、开头策略拆解
+- 解决了哪4个用户顾虑（对应哪些具体句子）
+- 开头的吸引手法（疑问/数据/反转/共情 等）
+
+### 四、价值呈现方式
+- 新效用 vs 旧效用如何对比呈现
+- 如何量化和可视化效果
+- 成本感知如何被弱化（直接成本/交易成本/间接成本）
+
+### 五、金句与观点分析
+- 核心观点列表（带原文引用）
+- 金句分析（使用了哪种模型：对比/重复/比喻/极端/定义，原文举例）
+- 情绪共鸣的设计方式
+
+### 六、写作手法与语言风格
+- 语言风格（口语化程度/动词密度/数据使用）
+- 节奏感设计（句子长短、段落呼吸）
+- 场景还原与白描手法
+
+### 七、转化逻辑链路
+- 问题-痛点-解决方案的递进链
+- 信任感建立方式
+- CTA（行动召唤）设计
+
+### 八、可复用的创作元素（最重要）
+- 3-5个最值得借鉴的写作手法（可迁移到其他选题）
+- 可复用的结构模板
+- 值得学习的金句模板
+
+---
+
+**最后请给出一张【框架总结卡片】**，用简洁要点形式列出这篇文案最核心的创作逻辑，方便快速参考使用。`;
+
+    try {
+      await callLLM({
+        endpoint: model.endpoint, apiKey: key, modelId: model.modelId,
+        messages: [{ role: 'system', content: sys }, { role: 'user', content: prompt }],
+        onChunk: (_, full) => setStream(full),
+        onDone: full => { setResult(full); setStream(''); setBusy(false); },
+        onError: err => { alert('分析失败：' + err); setBusy(false); },
+      });
+    } catch {}
+  };
+
+  const display = stream || result;
+
+  return (
+    <div className="p-6 space-y-5">
+      <div className="flex items-start gap-3">
+        <div className="w-8 h-8 rounded-full bg-purple-600 flex items-center justify-center text-sm font-bold flex-shrink-0 mt-0.5">1</div>
+        <div><div className="font-bold text-white">输入爆款文案，AI 深度分析</div><div className="text-gray-400 text-xs mt-0.5">可同时输入多篇（最多3篇），AI 提炼共同的创作逻辑</div></div>
+      </div>
+
+      <div className="space-y-4">
+        {inputs.map((inp, i) => (
+          <div key={i}>
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs text-gray-500">文案 {i+1}</span>
+              {inputs.length > 1 && <button onClick={() => setInputs(inputs.filter((_,j) => j !== i))} className="text-xs text-red-400 hover:text-red-300">✕ 删除</button>}
+            </div>
+            <Textarea placeholder={`粘贴第${i+1}篇爆款文案内容（视频口播文字稿）…`} rows={7} value={inp} onChange={e => setInput(i, e.target.value)} />
+          </div>
+        ))}
+      </div>
+
+      <div className="flex gap-3">
+        {inputs.length < 3 && (
+          <Btn onClick={() => setInputs([...inputs, ''])} variant="ghost">+ 再加一篇</Btn>
+        )}
+        <Btn onClick={analyze} disabled={busy} variant="primary">
+          {busy ? <><span className="animate-spin inline-block">⟳</span> 分析中…</> : '🔍 开始深度分析'}
+        </Btn>
+      </div>
+
+      {display && (
+        <Card>
+          <div className="flex items-center justify-between mb-4">
+            <div className="font-semibold text-white">📊 分析结果</div>
+            {result && <Btn onClick={() => onNext(result)} variant="success">进入第 2 步 →</Btn>}
+          </div>
+          <div className={`prose-content text-sm text-gray-300 max-h-[450px] overflow-y-auto leading-relaxed ${busy ? 'typing-cursor' : ''}`}>
+            {display}
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ─── Step 2 ────────────────────────────────────────────────
+function Step2({ analysis, onNext, onBack }) {
+  const [sel, setSel] = useState(analysis);
+  const [note, setNote] = useState('');
+
+  return (
+    <div className="p-6 space-y-5">
+      <div className="flex items-start gap-3">
+        <div className="w-8 h-8 rounded-full bg-purple-600 flex items-center justify-center text-sm font-bold flex-shrink-0 mt-0.5">2</div>
+        <div><div className="font-bold text-white">选择要使用的分析信息</div><div className="text-gray-400 text-xs mt-0.5">可直接使用全部，也可删改后选取你最想借鉴的部分</div></div>
+      </div>
+
+      <Card className="border-l-4 border-blue-500 rounded-l-none">
+        <div className="text-sm text-gray-300">
+          💡 <strong>两种使用方式：</strong><br/>
+          ① <span className="text-green-400">快速模式</span>：直接点击「使用全部分析」进入第3步<br/>
+          ② <span className="text-purple-400">精选模式</span>：在文本框中删除不想要的部分，保留核心内容
+        </div>
+      </Card>
+
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs text-gray-400">已选内容（可直接编辑）— {sel.length} 字</span>
+          <div className="flex gap-3">
+            <button onClick={() => setSel(analysis)} className="text-xs text-purple-400 hover:text-purple-300">↺ 重置为全部</button>
+            <button onClick={() => setSel('')} className="text-xs text-red-400 hover:text-red-300">清空</button>
+          </div>
+        </div>
+        <Textarea rows={12} value={sel} onChange={e => setSel(e.target.value)} />
+      </div>
+
+      <div>
+        <Textarea label="附加创作备注（可选）" placeholder="如：重点参考第三部分的开头设计；特别注意规避苦情叙事套路；借鉴其中的对比金句模型…" rows={3} value={note} onChange={e => setNote(e.target.value)} />
+      </div>
+
+      <div className="flex gap-3">
+        <Btn onClick={onBack} variant="ghost">← 返回第1步</Btn>
+        <Btn onClick={() => onNext(sel, note)} variant="primary">使用已选内容，进入第3步 →</Btn>
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 3 ────────────────────────────────────────────────
+const WC_PRESETS = ['200-400','400-600','600-900','900-1300','1300-1800','1800-2500','2500-3500'];
+
+function Step3({ ctx, onNext, onBack, model, apiKeys, skills, kb }) {
+  const [topic, setTopic] = useState('');
+  const [wc, setWc] = useState('800-1200');
+  const [audience, setAudience] = useState('');
+  const [platform, setPlatform] = useState('抖音/B站');
+  const [extra, setExtra] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [stream, setStream] = useState('');
+  const [result, setResult] = useState('');
+
+  const generate = async () => {
+    if (!topic.trim()) return alert('请输入创作选题');
+    if (!model) return alert('请先在【模型设置】中配置模型');
+    const key = apiKeys[model.provider];
+    if (!key) return alert('请先配置 API Key');
+
+    setBusy(true); setStream(''); setResult('');
+
+    const skillCtx = skills.filter(s => s.content.trim()).map(s => `### ${s.name}\n${s.content}`).join('\n\n');
+    const kbCtx = kb.slice(0,2).map(k => `《${k.title}》节选：\n${k.content.slice(0,300)}…`).join('\n---\n');
+    const sys = SYS
+      + (skillCtx ? `\n\n## 用户偏好与风格要求（请严格遵守）\n${skillCtx}` : '')
+      + (kbCtx ? `\n\n## 用户风格参考文章\n${kbCtx}` : '');
+
+    const wcTarget = wc.includes('-') ? `${wc} 字之间` : `约 ${wc} 字`;
+
+    const prompt = `## 创作任务
+
+请根据以下参数，为我创作一篇高质量的视频口播文案。
+
+### 创作参数
+- **选题**：${topic}
+- **目标字数**：${wcTarget}（请严格控制，不得超出）
+- **目标受众**：${audience || '根据选题自行判断'}
+- **发布平台**：${platform}
+${extra ? `- **额外要求**：${extra}` : ''}
+
+### 参考框架（基于爆款文案分析）
+${ctx}
+
+---
+
+## 创作标准
+
+**① 开头设计（占总字数15-20%）**
+必须同时解决4个顾虑：
+- "这关我什么事？" → 精准的人群场景描写，让目标受众瞬间对号入座
+- "这有用吗？" → 明确的价值承诺，最好带具体数字
+- "你谁啊？" → 身份认同 / 过来人经历 / 权威背书
+- "会不会很复杂？" → 低门槛暗示，减少心理负担
+
+**② 主体内容（占总字数60-70%）**
+使用 CREM 表达循环框架，每个循环包含：
+- 观点C：一句能打动人的核心判断（建议用金句模型）
+- 原理R：为什么会这样（解释根本逻辑）
+- 案例E：具体的场景/数据/故事（画面感强）
+- 方法M：具体可操作的解决方案（降低行动门槛）
+
+循环数量根据字数要求决定，循环之间要有递进关系。
+
+**③ 结尾+转化（占总字数15-20%）**
+- 总结核心价值主张
+- 给用户一个积极的心理暗示
+- 清晰的行动召唤（CTA）
+
+**④ 金句要求**（至少3句）
+- 运用：对比/重复/比喻/极端/定义 中的至少2种模型
+- 要求：口语化、15字以内、有节奏感、能独立成句
+
+**⑤ 写作风格**
+- 动词主导，少用形容词
+- 数字替代模糊描述
+- 场景具体，画面感强
+- 情绪真实，避免套路感
+
+---
+
+请直接输出文案正文，无需额外说明。适当分段，有呼吸感。`;
+
+    try {
+      await callLLM({
+        endpoint: model.endpoint, apiKey: key, modelId: model.modelId,
+        messages: [{ role: 'system', content: sys }, { role: 'user', content: prompt }],
+        onChunk: (_, full) => setStream(full),
+        onDone: full => { setResult(full); setStream(''); setBusy(false); },
+        onError: err => { alert('生成失败：' + err); setBusy(false); },
+      });
+    } catch {}
+  };
+
+  const display = stream || result;
+
+  return (
+    <div className="p-6 space-y-5">
+      <div className="flex items-start gap-3">
+        <div className="w-8 h-8 rounded-full bg-purple-600 flex items-center justify-center text-sm font-bold flex-shrink-0 mt-0.5">3</div>
+        <div><div className="font-bold text-white">输入新选题，生成文案</div><div className="text-gray-400 text-xs mt-0.5">结合爆款文案的创作逻辑，为你的选题生成高质量文案</div></div>
+      </div>
+
+      <div className="grid gap-4">
+        <Input label="创作选题 *" placeholder="如：高中生三个月数学从70分提升到120分的方法…" value={topic} onChange={e => setTopic(e.target.value)} />
+
+        <div className="grid grid-cols-2 gap-4">
+          <Input label="目标受众" placeholder="如：高二成绩中等、想逆袭的学生" value={audience} onChange={e => setAudience(e.target.value)} />
+          <div>
+            <label className="text-xs text-gray-400 mb-1.5 block">发布平台</label>
+            <select value={platform} onChange={e => setPlatform(e.target.value)}
+              className="w-full bg-gray-800/80 border border-gray-700 rounded-xl px-3.5 py-2.5 text-sm text-gray-200 focus:outline-none focus:border-purple-500">
+              {['抖音/B站','小红书','微信视频号','快手','YouTube'].map(p => <option key={p}>{p}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label className="text-xs text-gray-400 mb-2 block">目标字数</label>
+          <div className="flex flex-wrap gap-2">
+            {WC_PRESETS.map(p => (
+              <button key={p} onClick={() => setWc(p)}
+                className={`px-3 py-1.5 rounded-lg text-xs border transition-all ${wc === p ? 'border-purple-500 bg-purple-500/20 text-purple-300 font-medium' : 'border-gray-700 bg-gray-800 text-gray-400 hover:border-gray-600'}`}>
+                {p} 字
+              </button>
+            ))}
+            <input type="text" placeholder="自定义…" onChange={e => setWc(e.target.value)}
+              className="w-24 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-purple-500 placeholder:text-gray-600" />
+          </div>
+        </div>
+
+        <Textarea label="额外要求（可选）" placeholder="如：开头必须是反问句；不要出现「你」这个字；需要加入具体提分案例数据；结尾要引导添加微信…" rows={3} value={extra} onChange={e => setExtra(e.target.value)} />
+      </div>
+
+      <div className="flex gap-3">
+        <Btn onClick={onBack} variant="ghost">← 返回第2步</Btn>
+        <Btn onClick={generate} disabled={busy}>
+          {busy ? <><span className="animate-spin inline-block">⟳</span> 生成中…</> : '✍️ 生成文案'}
+        </Btn>
+      </div>
+
+      {display && (
+        <Card>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <div className="font-semibold text-white">✨ 生成的文案</div>
+              <div className="text-xs text-gray-500 mt-0.5">约 {display.length} 字</div>
+            </div>
+            {result && <Btn onClick={() => onNext(result, topic)} variant="success">进入第4步 →</Btn>}
+          </div>
+          <div className={`prose-content text-sm text-gray-300 max-h-[480px] overflow-y-auto leading-relaxed ${busy ? 'typing-cursor' : ''}`}>
+            {display}
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ─── Step 4 ────────────────────────────────────────────────
+function Step4({ result, topic, onBack, onRestart, skills, setSkills }) {
+  const [feedback, setFeedback] = useState('');
+  const [saved, setSaved] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [refining, setRefining] = useState(false);
+  const [refineReq, setRefineReq] = useState('');
+
+  const copy = () => {
+    navigator.clipboard.writeText(result);
+    setCopied(true); setTimeout(() => setCopied(false), 2000);
+  };
+
+  const download = () => exportWord(result, topic || '视频文案');
+
+  const saveFeedback = () => {
+    if (!feedback.trim()) return;
+    const note = `[${new Date().toLocaleDateString('zh-CN')}] 关于"${topic.slice(0,20)}"的反馈：\n${feedback}`;
+    const u = skills.map(s => s.id === 'style'
+      ? { ...s, content: s.content ? s.content + '\n\n' + note : note, usage: s.usage + 1, updated: new Date().toISOString() }
+      : s
+    );
+    setSkills(u); save(SK.SKILLS, u);
+    setSaved(true); setTimeout(() => setSaved(false), 2500);
+    setFeedback('');
+  };
+
+  return (
+    <div className="p-6 space-y-5">
+      <div className="flex items-start gap-3">
+        <div className="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center text-sm font-bold flex-shrink-0 mt-0.5">✓</div>
+        <div><div className="font-bold text-white">文案生成完成！</div><div className="text-gray-400 text-xs mt-0.5">可下载 Word 文档，也可以提供反馈帮助 Agent 持续学习你的风格</div></div>
+      </div>
+
+      <Card className="border-green-500/20">
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <div className="font-semibold text-white truncate max-w-xs">{topic}</div>
+            <div className="text-xs text-gray-500 mt-0.5">约 {result.length} 字</div>
+          </div>
+          <div className="flex gap-2 flex-shrink-0">
+            <Btn onClick={copy} variant="ghost" className="text-xs">
+              {copied ? '✓ 已复制' : '📋 复制'}
+            </Btn>
+            <Btn onClick={download} variant="blue" className="text-xs">
+              📄 下载 Word
+            </Btn>
+          </div>
+        </div>
+        <div className="bg-gray-800/60 rounded-xl p-4 max-h-96 overflow-y-auto text-sm text-gray-300 prose-content leading-relaxed">
+          {result}
+        </div>
+      </Card>
+
+      <Card>
+        <div className="font-semibold text-white mb-2">🧩 帮助 Agent 学习（可选但推荐）</div>
+        <div className="text-xs text-gray-500 mb-3">告诉系统哪里好、哪里需要改进，系统会把你的反馈记录到 Skills 中，下次生成会更符合你的要求</div>
+        <Textarea
+          placeholder="如：这次开头的反问式设计很好，以后继续保持；金句不够有力，希望更精炼一些；字数超出了，下次要更严格地控制在目标字数内；希望更多用口语化的表达…"
+          rows={4} value={feedback} onChange={e => setFeedback(e.target.value)}
+        />
+        <div className="flex gap-3 mt-3">
+          <Btn onClick={saveFeedback} disabled={saved || !feedback.trim()} variant={saved ? 'success' : 'primary'}>
+            {saved ? '✓ 已保存到 Skills' : '保存学习记录'}
+          </Btn>
+        </div>
+      </Card>
+
+      <div className="flex gap-3">
+        <Btn onClick={onBack} variant="ghost">← 返回修改</Btn>
+        <Btn onClick={onRestart}>🔄 开始新的创作</Btn>
+      </div>
+    </div>
+  );
+}
+
+// ─── Workflow Page ──────────────────────────────────────────
+function WorkflowPage({ model, apiKeys, skills, setSkills, kb }) {
+  const [step, setStep] = useState(1);
+  const [analysis, setAnalysis]   = useState('');
+  const [selCtx, setSelCtx]       = useState('');
+  const [generated, setGenerated] = useState('');
+  const [topic, setTopic]         = useState('');
+
+  const restart = () => { setStep(1); setAnalysis(''); setSelCtx(''); setGenerated(''); setTopic(''); };
+
+  const STEPS = [
+    { n:1, label:'分析爆款' }, { n:2, label:'选择信息' },
+    { n:3, label:'生成文案' }, { n:4, label:'下载输出' },
+  ];
+
+  return (
+    <div>
+      {/* Step bar */}
+      <div className="border-b border-gray-800 px-6 py-3">
+        <div className="flex items-center">
+          {STEPS.map((s, i) => (
+            <React.Fragment key={s.n}>
+              <div className={`flex items-center gap-2 py-1 px-2 rounded-lg ${step === s.n ? 'bg-purple-600/15' : ''}`}>
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
+                  step > s.n ? 'bg-green-500 text-white' : step === s.n ? 'bg-purple-600 text-white' : 'bg-gray-700 text-gray-500'
+                }`}>{step > s.n ? '✓' : s.n}</div>
+                <span className={`text-sm transition-colors ${step === s.n ? 'text-white font-medium' : 'text-gray-600'}`}>{s.label}</span>
+              </div>
+              {i < 3 && <div className={`step-line mx-1 transition-colors ${step > s.n ? 'bg-green-500/40' : 'bg-gray-800'}`} />}
+            </React.Fragment>
+          ))}
+        </div>
+      </div>
+
+      {step === 1 && <Step1 model={model} apiKeys={apiKeys} skills={skills} kb={kb} onNext={r => { setAnalysis(r); setStep(2); }} />}
+      {step === 2 && <Step2 analysis={analysis} onBack={() => setStep(1)} onNext={(s, n) => { setSelCtx(s + (n ? '\n\n补充备注：'+n : '')); setStep(3); }} />}
+      {step === 3 && <Step3 ctx={selCtx} model={model} apiKeys={apiKeys} skills={skills} kb={kb} onBack={() => setStep(2)} onNext={(c, t) => { setGenerated(c); setTopic(t); setStep(4); }} />}
+      {step === 4 && <Step4 result={generated} topic={topic} skills={skills} setSkills={setSkills} onBack={() => setStep(3)} onRestart={restart} />}
+    </div>
+  );
+}
+
+// ─── App ───────────────────────────────────────────────────
+function App() {
+  const [page, setPage] = useState('workflow');
+  const [apiKeys, setApiKeys]   = useState(() => load(SK.API_KEYS, {}));
+  const [model, setModel]       = useState(() => load(SK.MODEL, null));
+  const [kb, setKb]             = useState(() => load(SK.KB, []));
+  const [skills, setSkills]     = useState(() => load(SK.SKILLS, null) || DEFAULT_SKILLS);
+
+  const hasModel = !!(model && apiKeys[model?.provider]);
+
+  return (
+    <div className="flex min-h-screen">
+      <Sidebar page={page} setPage={setPage} hasModel={hasModel} />
+      <main className="flex-1 overflow-y-auto">
+        {!hasModel && page === 'workflow' && (
+          <div className="m-5 p-4 bg-yellow-500/8 border border-yellow-600/30 rounded-2xl flex items-center gap-3">
+            <span className="text-2xl">⚠️</span>
+            <div>
+              <div className="text-yellow-300 text-sm font-semibold">还未配置模型，无法使用创作工作流</div>
+              <div className="text-yellow-600 text-xs mt-0.5">请先点击左侧「⚙️ 模型设置」，添加 API Key 并选择一个模型</div>
+            </div>
+            <Btn onClick={() => setPage('settings')} variant="ghost" className="ml-auto text-yellow-300 border-yellow-600/50 hover:border-yellow-500 flex-shrink-0">去配置 →</Btn>
+          </div>
+        )}
+        {page === 'workflow' && <WorkflowPage model={model} apiKeys={apiKeys} skills={skills} setSkills={setSkills} kb={kb} />}
+        {page === 'knowledge' && <KnowledgePage kb={kb} setKb={setKb} />}
+        {page === 'skills'    && <SkillsPage skills={skills} setSkills={setSkills} />}
+        {page === 'settings'  && <SettingsPage apiKeys={apiKeys} setApiKeys={setApiKeys} model={model} setModel={setModel} />}
+      </main>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
